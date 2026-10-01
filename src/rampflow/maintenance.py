@@ -1,8 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass,replace
-from datetime import datetime,timedelta,date
+from datetime import datetime,timedelta,time
 from typing import Iterable,Mapping
-from .timeutil import utc
+from .timeutil import utc,UTC
 from .models import Decision
 
 @dataclass(frozen=True)
@@ -56,10 +56,15 @@ class MaintenanceControl:
             return Decision(False,"repeat-defect","repeat threshold reached",{"count":len(recent)})
         return Decision(True,"recorded","defect recorded",{"repeat_count":len(recent)})
 
-    def _expiry(self, opened: datetime, calendar_days: int | None) -> datetime | None:
+    def _expiry(self, deferred: datetime, calendar_days: int | None) -> datetime | None:
         if calendar_days is None:
             return None
-        return opened + timedelta(days=calendar_days)
+        t = utc(deferred)
+        # MEL relief expires at the END of the Nth calendar day following the
+        # deferral day, i.e. the next midnights measured by calendar dates —
+        # not a rolling 24*N hour window from the deferral timestamp.
+        deadline_date = t.date() + timedelta(days=calendar_days)
+        return datetime.combine(deadline_date, time.max).replace(tzinfo=UTC)
 
     def defer(self,defect_id:str,at:datetime,conditions:Iterable[str],cycles_used:int=0)->Deferral:
         defect=self.defects[defect_id]

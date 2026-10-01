@@ -112,6 +112,24 @@ class ReservationLedger(Generic[T]):
                 self._by_resource[rid].sort(key=lambda r:(r.window.start,r.window.end,r.token))
                 out.append(item)
             return tuple(out)
+    def bulk_release_payload_prefix(self,prefix:str,expected_generation:int|None=None)->int:
+        """Atomically release every reservation whose payload string starts with prefix."""
+        with self._lock:
+            if expected_generation is not None and expected_generation != self._generation:
+                raise StaleGeneration("ledger changed")
+            removed=0
+            for rid in list(self._by_resource):
+                items=self._by_resource[rid]
+                kept=[r for r in items if not (isinstance(r.payload,str) and r.payload.startswith(prefix))]
+                if len(kept)!=len(items):
+                    removed += len(items)-len(kept)
+                    if kept:
+                        self._by_resource[rid]=kept
+                    else:
+                        del self._by_resource[rid]
+            self._generation += 1 if removed else 0
+            return removed
+
     def occupied_at(self,resource_id:str,instant:datetime)->Reservation[T]|None:
         t=utc(instant)
         with self._lock:

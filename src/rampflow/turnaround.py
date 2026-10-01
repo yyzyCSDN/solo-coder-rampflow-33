@@ -131,8 +131,10 @@ class TurnaroundPlanner:
 
     def commit(self, plan: TurnPlan) -> Decision:
         if self.ledger.generation != plan.resource_generation:
-            self.plans[plan.flight_id] = plan
-            return Decision(True, "reconciled", "stale plan accepted after generation refresh", {"critical_path": plan.critical_path})
+            # A plan built against an older resource view cannot be committed.
+            # Accepting it would let a flight that has not been released hold
+            # ground equipment that newer plans already reserved.
+            return Decision(False,"stale-generation","turnaround plan built against an outdated resource version; replan required",{"plan_generation":plan.resource_generation,"current_generation":self.ledger.generation})
         staged=[]
         for run in plan.runs.values():
             for rid in run.resources:
@@ -144,6 +146,21 @@ class TurnaroundPlanner:
             return Decision(False,"resource-conflict",str(e))
         self.plans[plan.flight_id]=plan
         return Decision(True,"ok","turnaround plan committed",{"critical_path":plan.critical_path})
+
+    def withdraw(self, flight_id: str, expected_generation: int | None = None) -> Decision:
+        """Cancel a plan and release anything it held.
+
+        Works whether the plan is committed (equipment reservations exist) or
+        only prepared (never committed, nothing reserved yet).
+        """
+        if expected_generation is not None and self.ledger.generation != expected_generation:
+            return Decision(False,"stale-generation","ledger changed before withdrawal",{"expected":expected_generation,"current":self.ledger.generation})
+        existed = flight_id in self.plans
+        released=self.ledger.bulk_release_payload_prefix(flight_id + ":")
+        self.plans.pop(flight_id,None)
+        if not existed and released == 0:
+            return Decision(True,"withdrawn","turnaround plan discarded without any equipment commitment",{"released_reservations":0})
+        return Decision(True,"withdrawn","turnaround plan withdrawn and equipment released",{"released_reservations":released})
 
     def transition(self,flight_id:str,task_id:str,new_state:ServiceState,actual:Window|None=None,blocked_reason:str|None=None)->TaskRun:
         plan=self.plans[flight_id];run=plan.runs[task_id]
