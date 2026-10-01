@@ -121,11 +121,13 @@ class RampWorkflowControl:
         return self._guard(operation_id, "notam.stand.restriction.applied", subject, at, action, requirements=requirements)
 
     def release_maintenance_turnaround(self, operation_id: str, subject: str, at: datetime, action: Callable[[], T], requirements: tuple[Decision, ...] = ()) -> OperationReceipt:
-        event = self.stream.publish(operation_id, utc(at), "maintenance.turnaround.release.decided", subject, {"operation_id": operation_id})
-        result = action()
-        receipt = OperationReceipt(operation_id, event.topic, subject, event, result)
-        self._receipts[operation_id] = receipt
-        return receipt
+        # The airworthiness release and the departure/turn plan share one
+        # decision point: either both take effect at ``at`` or neither does.
+        # A denied release (or an action that withdraws the plan) must never be
+        # published as decided and must never leave equipment reserved, so the
+        # requirements are evaluated and the joint action runs before any event
+        # is visible downstream.
+        return self._guard(operation_id, "maintenance.turnaround.release.decided", subject, at, action, requirements=requirements)
 
     def commit_deicing_dispatch(self, operation_id: str, subject: str, at: datetime, action: Callable[[], T], requirements: tuple[Decision, ...] = ()) -> OperationReceipt:
         return self._guard(operation_id, "deicing.dispatch.committed", subject, at, action, requirements=requirements)

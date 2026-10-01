@@ -123,7 +123,7 @@ class TurnaroundPlanner:
             candidates.sort(key=lambda x:(x[0],x[1],x[2]))
             _,_,resources,wnd=candidates[0]
             for rid in resources:virtual[rid].append(wnd)
-            runs[tid]=TaskRun(tid,ServiceState.PLANNED,wnd,None,resources)
+            runs[tid]=TaskRun(tid,ServiceState.PLANNED,planned=wnd,resources=resources)
             completion[tid]=wnd.end
         if runs and max(r.planned.end for r in runs.values())>departure:raise RuntimeError("turnaround misses departure")
         critical,slack=self._critical(taskmap,order)
@@ -131,8 +131,9 @@ class TurnaroundPlanner:
 
     def commit(self, plan: TurnPlan) -> Decision:
         if self.ledger.generation != plan.resource_generation:
-            self.plans[plan.flight_id] = plan
-            return Decision(True, "reconciled", "stale plan accepted after generation refresh", {"critical_path": plan.critical_path})
+            return Decision(False, "plan-stale",
+                            "turnaround plan built against an old resource generation; replan and recommit",
+                            {"expected": plan.resource_generation, "current": self.ledger.generation})
         staged=[]
         for run in plan.runs.values():
             for rid in run.resources:
